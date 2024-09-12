@@ -9,22 +9,162 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Overview
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+Goal of this project is to predict the form of exercise done by participants, using data from activity recording devices such as Jawbone UP, Nike FuelBand and Fitbit.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise. This is the “classe” variable in the training set. We train 4 models: **Decision Tree, Random Forest, Gradient Boosted Trees, Support Vector Machine** using k-folds cross validation on the training set. We then predict using a validation set randomly selected from the training csv data to obtain the **accuracy** and **out of sample error rate**. Based on those numbers, we decide on the best model, and use it to predict 20 cases using the test csv set.
 
-```{r cars}
-summary(cars)
+## Background
+Exercise enthusiasts quantify how much of a particular activity they do, but rarely quantify how well they do it.  
+Our goal in this project is to use the data from accelerometers on the belt, forearm and dubmell of 6 participants.  
+They were asked to lift the correctly and in correctly in 5 different ways.
+
+## Data
+
+The data in this project comes from  
+http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+
+Training data set is available here  
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Test data set is available here  
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+More information about the data is available here  
+http://groupware.les.inf.puc-rio.br/har
+
+## Loading Libraries and Data 
+
+```{r results='hide', message=FALSE}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(kernlab)
+library(rattle)
+library(corrplot)
+set.seed(1234)
 ```
 
-## Including Plots
+```{r}
+trainData <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+testData <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+dim(trainData)
+dim(testData)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+We see that their are 160 variables with 19622 observations in the training set and 20 in the test set.
+
+## Cleaning the Data
+Removing unnecessary variables. Starting with N/A values
+```{r}
+trainData <- trainData[,colMeans(is.na(trainData)) < .9] #removing mostly na columns
+trainData <- trainData[,-c(1:7)] #removing metadata which is irrelevant to the outcome
+```
+
+Removing near zero variance variables.
+```{r}
+nvz <- nearZeroVar(trainData)
+trainData <- trainData[,-nvz]
+dim(trainData)
+```
+Now that we have finished removing the unnecessary variables, we can now split the training set into a **validation** and sub **training** set. The testing set "testData" will be left alone, and used for the final quiz test cases. 
+```{r}
+inTrain <- createDataPartition(y=trainData$classe, p=0.7, list=F)
+train <- trainData[inTrain,]
+valid <- trainData[-inTrain,]
+```
+
+## Creating and Testing the Models
+Here we will test a few popular models including: **Decision Trees, Random Forest, Gradient Boosted Trees,** and **SVM.**
+
+Set up control for training to use 3-fold cross validation. 
+```{r}
+control <- trainControl(method="cv", number=3, verboseIter=F)
+```
+
+## Decision Tree
+
+**Model:** 
+
+```{r, cache=TRUE}
+mod_trees <- train(classe~., data=train, method="rpart", trControl = control, tuneLength = 5)
+fancyRpartPlot(mod_trees$finalModel)
+```
+
+**Prediction:**
+
+```{r}
+pred_trees <- predict(mod_trees, valid)
+cmtrees <- confusionMatrix(pred_trees, factor(valid$classe))
+cmtrees
+```
+
+## Random Forest
+
+```{r, cache=TRUE}
+mod_rf <- train(classe~., data=train, method="rf", trControl = control, tuneLength = 5)
+
+pred_rf <- predict(mod_rf, valid)
+cmrf <- confusionMatrix(pred_rf, factor(valid$classe))
+cmrf
+```
+
+## Gradient Boosted Trees
+
+```{r, cache=TRUE}
+mod_gbm <- train(classe~., data=train, method="gbm", trControl = control, tuneLength = 5, verbose = F)
+
+pred_gbm <- predict(mod_gbm, valid)
+cmgbm <- confusionMatrix(pred_gbm, factor(valid$classe))
+cmgbm
+```
+
+## Support Vector Machine
+
+```{r, cache=TRUE}
+mod_svm <- train(classe~., data=train, method="svmLinear", trControl = control, tuneLength = 5, verbose = F)
+
+pred_svm <- predict(mod_svm, valid)
+cmsvm <- confusionMatrix(pred_svm, factor(valid$classe))
+cmsvm
+```
+
+## Results (Accuracy & Out of Sample Error)
+
+```{r, echo=FALSE}
+models <- c("Tree", "RF", "GBM", "SVM")
+accuracy <- round(c( cmtrees$overall[1], cmrf$overall[1], cmgbm$overall[1], cmsvm$overall[1]),3) #accuracy
+oos_error <- 1 - accuracy #out of sample error
+
+data.frame(accuracy = accuracy, oos_error = oos_error, row.names = models)
+```
+
+**The best model is the Random Forest model, with `r cmrf$overall[1]` accuracy and `r 1-cmrf$overall[1]` out of sample error rate. We find that to be a sufficient enough model to use for our test sets. ** 
+
+
+# Predictions on Test Set
+
+Running our test set to predict the classe (5 levels) outcome for 20 cases with the **Random Forest** model.
+```{r}
+pred <- predict(mod_rf, testData)
+print(pred)
+```
+
+# Appendix
+
+Github Repo: [Github](https://github.com/somachowdhury06/CourseraPracticalMachineLearning)
+
+correlation matrix of variables in training set
+```{r}
+corrPlot <- cor(train[, -length(names(train))])
+corrplot(corrPlot, method="color")
+```
+
+Plotting the models
+```{r}
+plot(mod_trees)
+plot(mod_rf)
+plot(mod_gbm)
+```
